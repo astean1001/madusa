@@ -1,0 +1,3 @@
+[submodule "acvtool"]
+	path = acvtool
+	url = https://github.com/pilgun/acvtool.git
