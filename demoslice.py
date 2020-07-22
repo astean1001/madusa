@@ -1,10 +1,14 @@
 import os
+import sys
 import re
 import pulp
 import argparse
 
 import xml.etree.ElementTree as ET
-import acvtool.smiler.reporter as ACV
+
+sys.path.extend(['./acvtool/smiler'])
+
+import reporter as ACV
 
 TEMP_PATH = '~/demoslice/temp'
 
@@ -15,7 +19,7 @@ parser.add_argument('ec_file_path', metavar='ec_files', type=str, nargs=1,
                     help='Path to EC files.')
 parser.add_argument('pickle_path', metavar='pickle', type=str, nargs=1,
                     help='Path to pickle object.')
-parser.add_argument('--output', '-o' action='store',
+parser.add_argument('--output', '-o', action='store',
                     help='Set output apk path')
 parser.add_argument('--purge_res', action='store_true',
                     help='Purge unused resources')
@@ -174,8 +178,12 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
     for m in _methods:
         for ins in _methods['buf']:
             for resource_id in resources_dict.keys():
+                if resource_id in ins:
+                    _costs[_methods.index(m)] = _costs[_methods.index(m)] + resources_dict[resource_id]['size']
+
             for asset_name in assets_dict.keys():
-                if len(asset_name.split(TEMP_PATH + "/assets/")) > 1 and asset_name[1] in ins:
+                if len(asset_name.split(TEMP_PATH + "/assets/")) > 1 and asset_name.split(TEMP_PATH + "/assets/")[1] in ins:
+                    _costs[_methods.index(m)] = _costs[_methods.index(m)] + assets_dict[asset_name]
 
             is_call = re.search("^invoke-", ins)
             if is_call:
@@ -211,7 +219,7 @@ def solve_ilp(costs, edges, vertices):
 
     x = [0]*len(vertices)
 
-    print(x)
+    print x
 
     model = pulp.LpProblem("Coverage Maximizing Problem", pulp.LpMaximize)
     model += pulp.lpSum(x)
@@ -224,8 +232,8 @@ def solve_ilp(costs, edges, vertices):
 
     model.solve()
 
-    print(pulp.LpStatus[model.status])
-    print(x)
+    print pulp.LpStatus[model.status]
+    print x
 
     return x
 
