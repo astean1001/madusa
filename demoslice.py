@@ -55,7 +55,7 @@ def get_resource_dict():
     resource_id_tree_root = resource_id_tree.getroot()
 
     for resource_id_tree_element in resource_id_tree_root.findall('public'):
-        _resource_dict[resource_id_tree_element.get("id")] = { "index": _len_resource, "type": resource_id_tree_element.get("type"), "name": resource_id_tree_element.get("name"), "size": 0, "child": [_len_resource] }
+        _resource_dict[resource_id_tree_element.get("id")] = { "index": _len_resource, "type": resource_id_tree_element.get("type"), "name": resource_id_tree_element.get("name"), "size": 0, "child": [_len_resource], "processed": [] }
         _len_resource = _len_resource + 1
 
     for resource_id_tree_element in resource_id_tree_root.findall('public'):
@@ -77,6 +77,42 @@ def get_asset_dict(resources_dict):
             raise Exception('Asset File Size Fetching Failed : Check permission settings on your home folder.')
 
     return _asset_dict
+
+def merge_drawables_and_mipmaps():
+    tempd_path = TEMP_PATH + "/temp_drawable"
+    if not os.path.exists(tempd_path):
+        os.makedirs(tempd_path)
+    drawable_folders = subprocess.check_output(['find', TEMP_PATH+"/res", "-name", "drawable*"])
+    drawable_path = ""
+    for df in drawable_folders.split("\n")[:-1]:
+        if df[-8:] == "drawable":
+            drawable_path = df
+        else:
+            p = subprocess.Popen("rsync -a "+df+"/* "+tempd_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
+            p.communicate()
+            p2 = subprocess.Popen("rm -rf "+df, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
+            p2.communicate()
+        
+    p = subprocess.Popen("rsync -a "+drawable_path+"/* "+tempd_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
+    p.communicate()
+    p2 = subprocess.Popen("rm -rf "+drawable_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
+    p2.communicate()
+    p3 = subprocess.Popen("mv "+tempd_path+" "+drawable_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
+    p3.communicate()
+    # vsync mipmaps
+    tempm_path = TEMP_PATH + "/temp_mipmap"
+    if not os.path.exists(tempm_path):
+        os.makedirs(tempm_path)
+    mipmap_folders = subprocess.check_output(['find', TEMP_PATH+"/res", "-name", "mipmap*"])
+    mipmap_path = TEMP_PATH+"/res/mipmap"
+    for mf in mipmap_folders.split("\n")[:-1]:
+        p = subprocess.Popen("rsync -a "+mf+"/* "+tempm_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
+        p.communicate()
+        p2 = subprocess.Popen("rm -rf "+mf, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
+        p2.communicate()
+        
+    p3 = subprocess.Popen("mv "+tempm_path+" "+mipmap_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
+    p3.communicate()
 
 def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
     ec_files = [os.path.join(ec_dir, f) for f in os.listdir(ec_dir) if os.path.isfile(os.path.join(ec_dir, f))]
@@ -257,7 +293,53 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
     print "Total Cost : "+str(_total_cost)
     return _costs, _edges, _vertices, _methods, _classes
 
-def solve_ilp(costs, edges, vertices, methods):
+def parseAndroidManifest(resource_dict):
+    resource_ref = re.compile("@[a-z:/\{\}]+/[a-zA-Z0-9_.]+")
+    style_ref = re.compile("\?[a-z:/\{\}]+[a-zA-Z0-9_.]+")
+
+    androidmanifest_tree = ET.parse(TEMP_PATH + "/AndroidManifest.xml")
+    androidmanifest_root = androidmanifest_tree.getroot()
+    androidmanifest_res = []
+    resource_ref_size = 0
+    resource_ref_child = []
+    style_ref_size = 0
+    style_ref_child = []
+    for androidmanifest_value in androidmanifest_root.iter():
+        if type(androidmanifest_value.text) == str and style_ref.match(androidmanifest_value.text):
+            androidmanifest_value_text = androidmanifest_value.text.replace("?","")
+            androidmanifest_value_text = androidmanifest_value_text.split('}')[-1]
+            androidmanifest_value_text = androidmanifest_value_text.split(':')[-1]
+            if len(androidmanifest_value_text.split("/")) > 1:
+                style_ref_size, style_ref_child = calculate_resource_size(resource_dict, androidmanifest_value_text.split("/")[0], androidmanifest_value_text.split("/")[1])
+            else: 
+                style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "attr", androidmanifest_value_text)
+            androidmanifest_res = list(set(androidmanifest_res + style_ref_child))
+        if type(androidmanifest_value.text) == str and resource_ref.match(androidmanifest_value.text):
+            androidmanifest_value_text = androidmanifest_value.text.replace("@","")
+            androidmanifest_value_text = androidmanifest_value_text.split('}')[-1]
+            androidmanifest_value_text = androidmanifest_value_text.split(':')[-1]
+            resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, androidmanifest_value_text.split('/')[0], androidmanifest_value_text.split('/')[1])
+            androidmanifest_res = list(set(androidmanifest_res + resource_ref_child))
+        for androidmanifest_attrib_value in androidmanifest_value.attrib.values():
+            if style_ref.match(androidmanifest_attrib_value):
+                androidmanifest_attrib_value = androidmanifest_attrib_value.replace("?","")
+                androidmanifest_attrib_value = androidmanifest_attrib_value.split('}')[-1]
+                androidmanifest_attrib_value = androidmanifest_attrib_value.split(':')[-1]
+                if len(androidmanifest_attrib_value.split("/")) > 1:
+                    style_ref_size, style_ref_child = calculate_resource_size(resource_dict, androidmanifest_attrib_value.split("/")[0], androidmanifest_attrib_value.split("/")[1])
+                else: 
+                    style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "attr", androidmanifest_attrib_value)
+                androidmanifest_res = list(set(androidmanifest_res + style_ref_child))
+            if resource_ref.match(androidmanifest_attrib_value):
+                androidmanifest_attrib_value = androidmanifest_attrib_value.replace("@","")
+                androidmanifest_attrib_value = androidmanifest_attrib_value.split('}')[-1]
+                androidmanifest_attrib_value = androidmanifest_attrib_value.split(':')[-1]
+                resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, androidmanifest_attrib_value.split('/')[0], androidmanifest_attrib_value.split('/')[1])
+                androidmanifest_res = list(set(androidmanifest_res + resource_ref_child))
+    return androidmanifest_res
+
+
+def solve_ilp(costs, edges, vertices, methods, init_resources):
     DEMO_SIZE_LIMIT = 10000000
 
     model = pulp.LpProblem("Coverage_Maximizing_Problem", pulp.LpMaximize)
@@ -276,6 +358,10 @@ def solve_ilp(costs, edges, vertices, methods):
     for v in range(0,len(vertices)):
         if vertices[v] == 1:
             model += x[str(v)] == 1
+    for ir in init_resources:
+        model += r[str(ir)] == 1
+    for i in range(len(costs)):
+        model += r[str(i)] >= 0
 
     model.solve(pulp.GLPK_CMD(path='/usr/local/bin/glpsol'))
 
@@ -317,40 +403,6 @@ def generate_smali_code(vertices, classes, methods):
 
 def purge_resources(resources_dict, assets_dict, resources):
     change = 0
-    tempd_path = TEMP_PATH + "/temp_drawable"
-    if not os.path.exists(tempd_path):
-        os.makedirs(tempd_path)
-    drawable_folders = subprocess.check_output(['find', TEMP_PATH+"/res", "-name", "drawable*"])
-    drawable_path = ""
-    for df in drawable_folders.split("\n")[:-1]:
-        if df[-8:] == "drawable":
-            drawable_path = df
-        else:
-            p = subprocess.Popen("rsync -a "+df+"/* "+tempd_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
-            p.communicate()
-            p2 = subprocess.Popen("rm -rf "+df, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
-            p2.communicate()
-        
-    p = subprocess.Popen("rsync -a "+drawable_path+"/* "+tempd_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
-    p.communicate()
-    p2 = subprocess.Popen("rm -rf "+drawable_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
-    p2.communicate()
-    p3 = subprocess.Popen("mv "+tempd_path+" "+drawable_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
-    p3.communicate()
-    # vsync mipmaps
-    tempm_path = TEMP_PATH + "/temp_mipmap"
-    if not os.path.exists(tempm_path):
-        os.makedirs(tempm_path)
-    mipmap_folders = subprocess.check_output(['find', TEMP_PATH+"/res", "-name", "mipmap*"])
-    mipmap_path = TEMP_PATH+"/res/mipmap"
-    for mf in mipmap_folders.split("\n")[:-1]:
-        p = subprocess.Popen("rsync -a "+mf+"/* "+tempm_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
-        p.communicate()
-        p2 = subprocess.Popen("rm -rf "+mf, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
-        p2.communicate()
-        
-    p3 = subprocess.Popen("mv "+tempm_path+" "+mipmap_path, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
-    p3.communicate()
     # purge public.xml
     public_path = TEMP_PATH + "/res/values/public.xml"
     # purge /res/values
@@ -415,8 +467,10 @@ def repack(output_path):
         raise Exception('Unpacking Failed : Check if apktool is installed properly.')
 
 def calculate_resource_size(resource_dict, resource_type, resource_name):
-    resource_xml_path = TEMP_PATH + "/res/values/"+resource_type+"s.xml"
-    resource_dir_path = TEMP_PATH + "/res/values/"+resource_type+"/"
+    resource_xml_folders = subprocess.check_output(['find', TEMP_PATH+"/res", "-name", "values*"])
+    resource_xml_paths = resource_xml_folders.split("\n")[:-1]
+    resource_folders = subprocess.check_output(['find', TEMP_PATH+"/res", "-name", resource_type+"*"])
+    resource_dir_paths = resource_folders.split("\n")[:-1]
 
     resource_ref = re.compile("@[a-z:/\{\}]+/[a-zA-Z0-9_.]+")
     style_ref = re.compile("\?[a-z:/\{\}]+[a-zA-Z0-9_.]+")
@@ -426,106 +480,174 @@ def calculate_resource_size(resource_dict, resource_type, resource_name):
     if len(target["child"]) > 1:
         return target["size"], target["child"]
 
-    if os.path.exists(resource_xml_path):
-        resource_value_size = 0
-        resource_value_child = target["child"]
-        resource_value_tree = ET.parse(resource_xml_path)
-        resource_value_root = resource_value_tree.getroot()
+    for resource_xml_dir in resource_xml_paths:
+        resource_xml_path = resource_xml_dir + "/" + resource_type +"s.xml"
+        if os.path.exists(resource_xml_path):
+            resource_value_size = target["size"]
+            resource_value_processed = target["processed"]
+            resource_value_child = target["child"]
+            resource_value_tree = ET.parse(resource_xml_path)
+            resource_value_root = resource_value_tree.getroot()
 
-        resource_value_search = resource_value_root.findall(".//*[@name='"+resource_name+"']")
+            resource_value_search = resource_value_root.findall(".//*[@name='"+resource_name+"']")
 
-        if len(resource_value_root.findall(".//*[@name='"+resource_name+"']")) < 1:
-            pass
-        else:
-            for resource_value in resource_value_root.findall(".//*[@name='"+resource_name+"']"):
-                for resource_attrib_val in resource_value.attrib.values():
-                    if style_ref.match(resource_attrib_val):
-                        resource_attrib_val = resource_attrib_val.replace("?","")
-                        resource_attrib_val = resource_attrib_val.split('}')[-1]
-                        if len(resource_attrib_val.split("/")) > 1:
-                            style_ref_size, style_ref_child = calculate_resource_size(resource_dict, resource_attrib_val.split("/")[0], resource_attrib_val.split("/")[1])
+            if len(resource_value_root.findall(".//*[@name='"+resource_name+"']")) < 1:
+                pass
+            else:
+                for resource_value in resource_value_root.findall(".//*[@name='"+resource_name+"']"):
+                    if not resource_xml_path in resource_value_processed:
+                        resource_value_size = resource_value_size + utf8len(ET.tostring(resource_value))
+                        resource_value_processed = resource_value_processed + [resource_xml_path]
+                        update_resource_processed(resource_dict, resource_type, resource_name, resource_xml_path)
+                    if type(resource_value.text) == str and style_ref.match(resource_value.text):
+                        resource_value_text = resource_value.text.replace("?","")
+                        resource_value_text = resource_value_text.split('}')[-1]
+                        resource_value_text = resource_value_text.split(':')[-1]
+                        if len(resource_value_text.split("/")) > 1:
+                            style_ref_size, style_ref_child = calculate_resource_size(resource_dict, resource_value_text.split("/")[0], resource_value_text.split("/")[1])
                         else: 
-                            style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "style", resource_attrib_val)
-                        #resource_value_size = resource_value_size + style_ref_size
+                            style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "attr", resource_value_text)
                         resource_value_child = list(set(resource_value_child + style_ref_child))
-                    if resource_ref.match(resource_attrib_val):
-                        resource_attrib_val = resource_attrib_val.replace("@","")
-                        resource_attrib_val = resource_attrib_val.split('}')[-1]
-                        resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, resource_attrib_val.split('/')[0], resource_attrib_val.split('/')[1])
-                        #resource_value_size = resource_value_size + resource_ref_size
+                    if type(resource_value.text) == str and resource_ref.match(resource_value.text):
+                        resource_value_text = resource_value.text.replace("@","")
+                        resource_value_text = resource_value_text.split('}')[-1]
+                        resource_value_text = resource_value_text.split(':')[-1]
+                        resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, resource_value_text.split('/')[0], resource_value_text.split('/')[1])
                         resource_value_child = list(set(resource_value_child + resource_ref_child))
-
-                resource_value_size = resource_value_size + utf8len(ET.tostring(resource_value))
-
-                for resource_value_item in resource_value.iter():
-                    for resource_item_attrib_val in resource_value_item.attrib.values():
-                        if style_ref.match(resource_item_attrib_val):
-                            resource_item_attrib_val = resource_item_attrib_val.replace("?","")
-                            resource_item_attrib_val = resource_item_attrib_val.split('}')[-1]
-                            if len(resource_item_attrib_val.split("/")) > 1:
-                                style_ref_size, style_ref_child = calculate_resource_size(resource_dict, resource_item_attrib_val.split("/")[0], resource_item_attrib_val.split("/")[1])
-                            else:
-                                style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "style", resource_item_attrib_val)
+                    for resource_attrib_val in resource_value.attrib.values():
+                        if style_ref.match(resource_attrib_val):
+                            resource_attrib_val = resource_attrib_val.replace("?","")
+                            resource_attrib_val = resource_attrib_val.split('}')[-1]
+                            resource_attrib_val = resource_attrib_val.split(':')[-1]
+                            if len(resource_attrib_val.split("/")) > 1:
+                                style_ref_size, style_ref_child = calculate_resource_size(resource_dict, resource_attrib_val.split("/")[0], resource_attrib_val.split("/")[1])
+                            else: 
+                                style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "attr", resource_attrib_val)
                             #resource_value_size = resource_value_size + style_ref_size
                             resource_value_child = list(set(resource_value_child + style_ref_child))
-                        if resource_ref.match(resource_item_attrib_val):
-                            resource_item_attrib_val = resource_item_attrib_val.replace("@","")
-                            resource_item_attrib_val = resource_item_attrib_val.split('}')[-1]
-                            resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, resource_item_attrib_val.split('/')[0], resource_item_attrib_val.split('/')[1])
+                        if resource_ref.match(resource_attrib_val):
+                            resource_attrib_val = resource_attrib_val.replace("@","")
+                            resource_attrib_val = resource_attrib_val.split('}')[-1]
+                            resource_attrib_val = resource_attrib_val.split(':')[-1]
+                            resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, resource_attrib_val.split('/')[0], resource_attrib_val.split('/')[1])
                             #resource_value_size = resource_value_size + resource_ref_size
                             resource_value_child = list(set(resource_value_child + resource_ref_child))
-                    resource_value_size = resource_value_size + utf8len(ET.tostring(resource_value_item))
 
-            update_resource_size(resource_dict, resource_type, resource_name, resource_value_size)
-            update_resource_child(resource_dict, resource_type, resource_name, resource_value_child)
+                    for resource_value_item in resource_value.iter():
+                        if resource_value_item.tag == "item" and "name" in resource_value_item.attrib.keys():
+                            style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "attr", resource_value_item.attrib["name"])
+                            resource_value_child = list(set(resource_value_child + style_ref_child))
 
-            return resource_value_size, resource_value_child
+                        if type(resource_value_item.text) == str and style_ref.match(resource_value_item.text):
+                            resource_value_item_text = resource_value_item.text.replace("?","")
+                            resource_value_item_text = resource_value_item_text.split('}')[-1]
+                            resource_value_item_text = resource_value_item_text.split(':')[-1]
+                            if len(resource_value_item_text.split("/")) > 1:
+                                style_ref_size, style_ref_child = calculate_resource_size(resource_dict, resource_value_item_text.split("/")[0], resource_value_item_text.split("/")[1])
+                            else: 
+                                style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "attr", resource_value_item_text)
+                            resource_value_child = list(set(resource_value_child + style_ref_child))
+                        if type(resource_value_item.text) == str and resource_ref.match(resource_value_item.text):
+                            resource_value_item_text = resource_value_item.text.replace("@","")
+                            resource_value_item_text = resource_value_item_text.split('}')[-1]
+                            resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, resource_value_item_text.split('/')[0], resource_value_item_text.split('/')[1])
+                            resource_value_child = list(set(resource_value_child + resource_ref_child))
+                            
+                        for resource_item_attrib_val in resource_value_item.attrib.values():
+                            if style_ref.match(resource_item_attrib_val):
+                                resource_item_attrib_val = resource_item_attrib_val.replace("?","")
+                                resource_item_attrib_val = resource_item_attrib_val.split('}')[-1]
+                                resource_item_attrib_val = resource_item_attrib_val.split(':')[-1]
+                                if len(resource_item_attrib_val.split("/")) > 1:
+                                    style_ref_size, style_ref_child = calculate_resource_size(resource_dict, resource_item_attrib_val.split("/")[0], resource_item_attrib_val.split("/")[1])
+                                else:
+                                    style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "attr", resource_item_attrib_val)
+                                #resource_value_size = resource_value_size + style_ref_size
+                                resource_value_child = list(set(resource_value_child + style_ref_child))
+                            if resource_ref.match(resource_item_attrib_val):
+                                resource_item_attrib_val = resource_item_attrib_val.replace("@","")
+                                resource_item_attrib_val = resource_item_attrib_val.split('}')[-1]
+                                resource_item_attrib_val = resource_item_attrib_val.split(':')[-1]
+                                resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, resource_item_attrib_val.split('/')[0], resource_item_attrib_val.split('/')[1])
+                                #resource_value_size = resource_value_size + resource_ref_size
+                                resource_value_child = list(set(resource_value_child + resource_ref_child))
+                        #resource_value_size = resource_value_size + utf8len(ET.tostring(resource_value_item))
 
-    if os.path.exists(resource_dir_path):
-        resource_file_size = 0
-        for dirpath, dirnames, filenames in os.walk(resource_dir_path):
-            for filename in filenames:
-                if os.path.splitext(filename)[0] == resource_name:
-                    try:
-                        resource_file_size = resource_file_size + os.path.getsize(os.path.join(dirpath,filename))
-                    except OSError:
-                        raise Exception('Resource File Size Fetching Failed : Check permission settings on your home folder.')
+                update_resource_size(resource_dict, resource_type, resource_name, resource_value_size)
+                update_resource_child(resource_dict, resource_type, resource_name, resource_value_child)
 
-                    if os.path.splitext(filename)[1] == ".xml":
-                        with open(os.path.join(dirpath,filename), "r") as resource_xml_file:
-                            resource_xml_file_lines = f.readlines()
-                            for resource_xml_file_line in resource_xml_file_lines:
-                                resource_ref_list = resource_ref.findall(resource_xml_file_line)
-                                style_ref_list = style_ref.findall(resource_xml_file_line)
+    for resource_dir_path in resource_dir_paths:
+        if os.path.exists(resource_dir_path):
+            resource_file_size = target["size"]
+            resource_file_child = target["child"]
+            resource_file_processed = target["processed"]
+            for dirpath, dirnames, filenames in os.walk(resource_dir_path):
+                for filename in filenames:
+                    if os.path.splitext(filename)[0] == resource_name:
+                        try:
+                            if not os.path.join(dirpath,filename) in resource_file_processed:
+                                resource_file_processed = resource_file_processed + [os.path.join(dirpath,filename)]
+                                update_resource_processed(resource_dict, resource_type, resource_name, os.path.join(dirpath,filename))
+                                resource_file_size = resource_file_size + os.path.getsize(os.path.join(dirpath,filename))
+                        except OSError:
+                            raise Exception('Resource File Size Fetching Failed : Check permission settings on your home folder.')
 
-                                for resource_ref_element in resource_ref_list:
-                                    resource_ref_element_stripns = resource_ref_element.replace("@","")
-                                    resource_ref_element_stripns = resource_ref_element_stripns.split('}')[-1]
-                                    resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, resource_ref_element_stripns.split('/')[0], resource_ref_element_stripns.split('/')[1])
-                                    #resource_file_size = resource_file_size + resource_ref_size
-                                    resource_value_child = list(set(resource_value_child + resource_ref_child))
+                        if os.path.splitext(filename)[1] == ".xml":
+                            resource_file_tree = ET.parse(os.path.join(dirpath,filename))
+                            resource_file_root = resource_file_tree.getroot()
+                            for resource_file_value in resource_file_root.iter():
+                                if resource_file_value.tag == "item" and "name" in resource_file_value.attrib.keys():
+                                    style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "attr", resource_file_value.attrib["name"])
+                                    resource_file_child = list(set(resource_file_child + style_ref_child))
 
-                                for style_ref_element in style_ref_list:
-                                    style_ref_element_stripns = style_ref_element.replace("?","")
-                                    style_ref_element_stripns = style_ref_element_stripns.split('}')[-1]
-                                    if len(style_ref_element_stripns.split("/")) > 1:
-                                        style_ref_size, style_ref_child = calculate_resource_size(resource_dict, style_ref_element_stripns.split("/")[0], style_ref_element_stripns.split("/")[1])
-                                    else:
-                                        style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "style", style_ref_element_stripns)
-                                    #resource_file_size = resource_file_size + style_ref_size
-                                    resource_value_child = list(set(resource_value_child + style_ref_child))
-                    
-                    update_resource_size(resource_dict, resource_type, resource_name, resource_file_size)
-                    update_resource_child(resource_dict, resource_type, resource_name, resource_value_child)
+                                if type(resource_file_value.text) == str and style_ref.match(resource_file_value.text):
+                                    resource_file_value_text = resource_file_value.text.replace("?","")
+                                    resource_file_value_text = resource_file_value_text.split('}')[-1]
+                                    resource_file_value_text = resource_file_value_text.split(':')[-1]
+                                    if len(resource_file_value_text.split("/")) > 1:
+                                        style_ref_size, style_ref_child = calculate_resource_size(resource_dict, resource_file_value_text.split("/")[0], resource_file_value_text.split("/")[1])
+                                    else: 
+                                        style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "attr", resource_file_value_text)
+                                    resource_file_child = list(set(resource_file_child + style_ref_child))
+                                if type(resource_file_value.text) == str and resource_ref.match(resource_file_value.text):
+                                    resource_file_value_text = resource_file_value.text.replace("@","")
+                                    resource_file_value_text = resource_file_value_text.split('}')[-1]
+                                    resource_file_value_text = resource_file_value_text.split(':')[-1]
+                                    resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, resource_file_value_text.split('/')[0], resource_file_value_text.split('/')[1])
+                                    resource_file_child = list(set(resource_file_child + resource_ref_child))
 
-                    return resource_value_size, resource_value_child
+                                for resource_file_attrib_val in resource_file_value.attrib.values():
+                                    if style_ref.match(resource_file_attrib_val):
+                                        resource_file_attrib_val = resource_file_attrib_val.replace("?","")
+                                        resource_file_attrib_val = resource_file_attrib_val.split('}')[-1]
+                                        resource_file_attrib_val = resource_file_attrib_val.split(':')[-1]
+                                        if len(resource_file_attrib_val.split("/")) > 1:
+                                            style_ref_size, style_ref_child = calculate_resource_size(resource_dict, resource_file_attrib_val.split("/")[0], resource_file_attrib_val.split("/")[1])
+                                        else: 
+                                            style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "attr", resource_file_attrib_val)
+                                        resource_file_child = list(set(resource_file_child + style_ref_child))
+                                    if resource_ref.match(resource_file_attrib_val):
+                                        resource_file_attrib_val = resource_file_attrib_val.replace("@","")
+                                        resource_file_attrib_val = resource_file_attrib_val.split('}')[-1]
+                                        resource_file_attrib_val = resource_file_attrib_val.split(':')[-1]
+                                        resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, resource_file_attrib_val.split('/')[0], resource_file_attrib_val.split('/')[1])
+                                        resource_file_child = list(set(resource_file_child + resource_ref_child))
+                        
+                        update_resource_size(resource_dict, resource_type, resource_name, resource_file_size)
+                        update_resource_child(resource_dict, resource_type, resource_name, resource_file_child)
 
+    target = get_resource_info_by_name(resource_dict, resource_type, resource_name)
     return target["size"], target["child"]
+
+def update_resource_processed(resource_dict, resource_type, resource_name, update_processed):
+    for key, val in resource_dict.items():
+        if val["type"] == resource_type and val["name"] == resource_name:
+            resource_dict[key]["processed"] = resource_dict[key]["processed"] + [update_processed]
 
 def update_resource_size(resource_dict, resource_type, resource_name, update_size):
     for key, val in resource_dict.items():
         if val["type"] == resource_type and val["name"] == resource_name:
-            resource_dict[key]["size"] = resource_dict[key]["size"] + update_size
+            resource_dict[key]["size"] = update_size
 
 def update_resource_child(resource_dict, resource_type, resource_name, update_child):
     for key, val in resource_dict.items():
@@ -536,20 +658,28 @@ def get_resource_info_by_name(resource_dict, resource_type, resource_name):
     for key, val in resource_dict.items():
         if val["type"] == resource_type and val["name"] == resource_name:
             return resource_dict[key]
-    return {"type":"", "name":"", "size":0, "index":-1, "child": []}
+    return {"type":"", "name":"", "size":0, "index":-1, "child": [], "processed": []}
 
 print "Welcome to Instant-slicer!"
 print "Unpacking target application at : "+TEMP_PATH
 unpack_target(args.target_path[0])
 print "Parsing resource list from XML ..."
 resource_dict = get_resource_dict()
+'''
+for m in resource_dict.items():
+    print m
+'''
 print "Parsing asset list from directory ..."
 asset_dict = get_asset_dict(resource_dict)
+print "Merging Drawables and Mipmaps ..."
+merge_drawables_and_mipmaps()
 print "Calculating resource size weighted method dependency graph ..."
 costs, edges, vertices, methods, classes = build_method_dependency_graph(args.ec_file_path[0], args.pickle_path[0], resource_dict, asset_dict)
 edges = list(set(edges))
+print "Parsing AndroidManifest for initial resource usage check ..."
+init_resources = parseAndroidManifest(resource_dict)
 print "Solving Maximum Code Coverage Problem ..."
-vertices, resources = solve_ilp(costs, edges, vertices, methods)
+vertices, resources = solve_ilp(costs, edges, vertices, methods, init_resources)
 all_vertices_len = 0;
 covered_len = 0;
 for a in vertices:
@@ -557,6 +687,7 @@ for a in vertices:
         covered_len = covered_len + 1
     all_vertices_len = all_vertices_len + 1
 print "Covered :" + str(covered_len) + "/" + str(all_vertices_len)
+print resources
 '''
 res_name = []
 for res_key, res_elem in resource_dict.items():
