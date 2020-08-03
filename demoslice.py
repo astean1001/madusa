@@ -267,7 +267,8 @@ def solve_ilp(costs, edges, vertices, methods):
     model += pulp.lpSum([costs[v] * r[str(v)] for v in range(0,len(costs))]) <= DEMO_SIZE_LIMIT
     for v in range(0,len(vertices)):
         if vertices[v] != 1:
-            model += pulp.lpSum([x[str(edge[0])] for edge in edges if edge[1] == v]) >= x[str(v)]
+            if any(edge[1] == v for edge in edges):
+                model += pulp.lpSum([x[str(edge[0])] for edge in edges if edge[1] == v]) >= x[str(v)]
     for i in range(0,len(costs)):
         for v in range(len(vertices)):
             if i in methods[v]['res']:
@@ -501,7 +502,7 @@ def calculate_resource_size(resource_dict, resource_type, resource_name):
                                     resource_ref_element_stripns = resource_ref_element.replace("@","")
                                     resource_ref_element_stripns = resource_ref_element_stripns.split('}')[-1]
                                     resource_ref_size, resource_ref_child = calculate_resource_size(resource_dict, resource_ref_element_stripns.split('/')[0], resource_ref_element_stripns.split('/')[1])
-                                    resource_file_size = resource_file_size + resource_ref_size
+                                    #resource_file_size = resource_file_size + resource_ref_size
                                     resource_value_child = list(set(resource_value_child + resource_ref_child))
 
                                 for style_ref_element in style_ref_list:
@@ -511,7 +512,7 @@ def calculate_resource_size(resource_dict, resource_type, resource_name):
                                         style_ref_size, style_ref_child = calculate_resource_size(resource_dict, style_ref_element_stripns.split("/")[0], style_ref_element_stripns.split("/")[1])
                                     else:
                                         style_ref_size, style_ref_child = calculate_resource_size(resource_dict, "style", style_ref_element_stripns)
-                                    resource_file_size = resource_file_size + style_ref_size
+                                    #resource_file_size = resource_file_size + style_ref_size
                                     resource_value_child = list(set(resource_value_child + style_ref_child))
                     
                     update_resource_size(resource_dict, resource_type, resource_name, resource_file_size)
@@ -549,6 +550,13 @@ costs, edges, vertices, methods, classes = build_method_dependency_graph(args.ec
 edges = list(set(edges))
 print "Solving Maximum Code Coverage Problem ..."
 vertices, resources = solve_ilp(costs, edges, vertices, methods)
+all_vertices_len = 0;
+covered_len = 0;
+for a in vertices:
+    if a == 1:
+        covered_len = covered_len + 1
+    all_vertices_len = all_vertices_len + 1
+print "Covered :" + str(covered_len) + "/" + str(all_vertices_len)
 '''
 res_name = []
 for res_key, res_elem in resource_dict.items():
