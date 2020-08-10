@@ -251,6 +251,17 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
                 class_name = ins.split(" ")[-1].split("->")[0][1:-1]
                 method_name = ins.split(" ")[-1].split("->")[1]
 
+                if "getIdentifier" in method_name:
+                    string_ref = re.compile('"[a-zA-Z0-9_.$]*"')
+                    for sins in m['buf']:
+                        strings = string_ref.findall(sins)
+                        for s in strings:
+                            print "String "+s+" Found!"
+                            for resource_id, resource in resources_dict.items():
+                                if s[1:-1] in resource['name']:
+                                    _methods[i]['res'] = _methods[i]['res'] + resources_dict[resource_id]['child']
+                                    print resource['name']+" is in method "+m['name']+"!"
+
                 target_classes = [class_name]
                 search_queue = [class_name]
 
