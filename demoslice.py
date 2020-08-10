@@ -14,6 +14,7 @@ import reporter as ACV
 from operator import attrgetter
 
 TEMP_PATH = os.path.join(os.path.expanduser("~"),"demoslice","temp")
+TEMP_PATH_BACKUP = os.path.join(os.path.expanduser("~"),"demoslice","temp_orig")
 
 parser = argparse.ArgumentParser(description='Slicing and repackaging Android APK into demo application based on demo scenario.')
 parser.add_argument('target_path', metavar='target', type=str, nargs=1,
@@ -33,14 +34,28 @@ parser.add_argument('--clean', action='store_true',
 
 args = parser.parse_args()
 
+DEMO_SIZE_LIMIT_SUCCESS = 0
+DEMO_SIZE_LIMIT = 10000000
+DEMO_SIZE_LIMIT_L = 0
+DEMO_SIZE_LIMIT_R = DEMO_SIZE_LIMIT
+APK_SIZE_LIMIT = DEMO_SIZE_LIMIT
+SEARCH_DEPTH = 5
+
 def utf8len(s):
     return len(s.encode('utf-8'))
+
+def resetToOriginal():
+    FNULL = open(os.devnull, 'w')
+    delete_temp_process = subprocess.call("rm -rf "+TEMP_PATH, shell=True, stdout=FNULL)
+    copy_backup_process = subprocess.call("cp -r "+TEMP_PATH_BACKUP+" "+TEMP_PATH, shell=True, stdout=FNULL)
+    
 
 def unpack_target(target):
     FNULL = open(os.devnull, 'w')
 
     target_path_abs = os.path.abspath(target)
     unpack_process = subprocess.call("apktool d "+target_path_abs+" -o "+TEMP_PATH+" -f", shell=True, stdout=FNULL)
+    unpack_process_backup = subprocess.call("cp -r "+TEMP_PATH+" "+TEMP_PATH_BACKUP, shell=True, stdout=FNULL)
     
     if unpack_process != 0:
         raise Exception('Unpacking Failed : Check if apktool is installed properly.')
@@ -223,8 +238,8 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
     for i in range(len(_methods)):
         m = _methods[i]
         for ins in m['buf']:
-            for resource_id in resources_dict.keys():
-                if resource_id in ins:
+            for resource_id, resource in resources_dict.items():
+                if resource['name'] in ins or resource_id in ins:
                     _methods[i]['res'] = _methods[i]['res'] + resources_dict[resource_id]['child']
 
             for asset_name in assets_dict.keys():
@@ -294,8 +309,8 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
     return _costs, _edges, _vertices, _methods, _classes
 
 def parseAndroidManifest(resource_dict):
-    resource_ref = re.compile("@[a-z:/\{\}]+/[a-zA-Z0-9_.]+")
-    style_ref = re.compile("\?[a-z:/\{\}]+[a-zA-Z0-9_.]+")
+    resource_ref = re.compile("@[a-z:/\{\}]+/[a-zA-Z0-9_.$]+")
+    style_ref = re.compile("\?[a-z:/\{\}]+[a-zA-Z0-9_.$]+")
 
     androidmanifest_tree = ET.parse(TEMP_PATH + "/AndroidManifest.xml")
     androidmanifest_root = androidmanifest_tree.getroot()
@@ -340,7 +355,6 @@ def parseAndroidManifest(resource_dict):
 
 
 def solve_ilp(costs, edges, vertices, methods, init_resources):
-    DEMO_SIZE_LIMIT = 10000000
 
     model = pulp.LpProblem("Coverage_Maximizing_Problem", pulp.LpMaximize)
     x = pulp.LpVariable.dicts('x', [str(i) for i in range(len(vertices))], cat='Binary')
@@ -466,14 +480,40 @@ def repack(output_path):
     if repack_process != 0:
         raise Exception('Unpacking Failed : Check if apktool is installed properly.')
 
+    if os.path.getsize(outdir) < APK_SIZE_LIMIT:
+        return 1
+    else:
+        return 0
+
+def remove_duplicated_files():
+    drawable_path = TEMP_PATH+"/res/drawable"
+    drawable_list = []
+    mipmap_path = TEMP_PATH+"/res/mipmap"
+    mipmap_list = []
+    for dirpath, dirnames, filenames in os.walk(drawable_path):
+        for filename in filenames:
+            no_ext = os.path.splitext(filename)[0]
+            if no_ext in drawable_list:
+                p2 = subprocess.Popen("rm -rf "+dirpath+"/"+filename, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
+            else:
+                drawable_list = drawable_list + [no_ext]
+
+    for dirpath, dirnames, filenames in os.walk(mipmap_path):
+        for filename in filenames:
+            no_ext = os.path.splitext(filename)[0]
+            if no_ext in mipmap_list:
+                p2 = subprocess.Popen("rm -rf "+dirpath+"/"+filename, shell=True, stdin=subprocess.PIPE, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, close_fds=True)
+            else:
+                mipmap_list = mipmap_list + [no_ext]
+
 def calculate_resource_size(resource_dict, resource_type, resource_name):
     resource_xml_folders = subprocess.check_output(['find', TEMP_PATH+"/res", "-name", "values*"])
     resource_xml_paths = resource_xml_folders.split("\n")[:-1]
     resource_folders = subprocess.check_output(['find', TEMP_PATH+"/res", "-name", resource_type+"*"])
     resource_dir_paths = resource_folders.split("\n")[:-1]
 
-    resource_ref = re.compile("@[a-z:/\{\}]+/[a-zA-Z0-9_.]+")
-    style_ref = re.compile("\?[a-z:/\{\}]+[a-zA-Z0-9_.]+")
+    resource_ref = re.compile("@[a-z:/\{\}]+/[a-zA-Z0-9_.$]+")
+    style_ref = re.compile("\?[a-z:/\{\}]+[a-zA-Z0-9_.$]+")
 
     target = get_resource_info_by_name(resource_dict, resource_type, resource_name)
 
@@ -671,52 +711,86 @@ for m in resource_dict.items():
 '''
 print "Parsing asset list from directory ..."
 asset_dict = get_asset_dict(resource_dict)
-print "Merging Drawables and Mipmaps ..."
-merge_drawables_and_mipmaps()
+
 print "Calculating resource size weighted method dependency graph ..."
 costs, edges, vertices, methods, classes = build_method_dependency_graph(args.ec_file_path[0], args.pickle_path[0], resource_dict, asset_dict)
 edges = list(set(edges))
 print "Parsing AndroidManifest for initial resource usage check ..."
 init_resources = parseAndroidManifest(resource_dict)
-print "Solving Maximum Code Coverage Problem ..."
-vertices, resources = solve_ilp(costs, edges, vertices, methods, init_resources)
-all_vertices_len = 0;
-covered_len = 0;
-for a in vertices:
-    if a == 1:
-        covered_len = covered_len + 1
-    all_vertices_len = all_vertices_len + 1
-print "Covered :" + str(covered_len) + "/" + str(all_vertices_len)
-print resources
-'''
-res_name = []
-for res_key, res_elem in resource_dict.items():
-    res_name = res_name + [ res_elem["type"] + "/" + res_elem["name"] ]
-for asset_key, asset_elem in asset_dict.items():
-    res_name = res_name + [ "assets/"+asset_key ]
-for _m in methods:
-    res_name = res_name + [ _m["class"]+"/"+_m["name"] ]
-for r in range(len(resources)):
-    if resources[r] == None:
-        sys.stdout.write(res_name[r] + ", ")
-        sys.stdout.flush()
-'''
-print "Generating Smali Code based on ILP results ..."
-generate_smali_code(vertices, classes, methods)
 
-if args.purge_res:
-    print "Deleting Unused Resources ..."
-    change = 1
-    while change:
-        change = purge_resources(resource_dict, asset_dict, resources)
-        print str(change) + " resources deleted."
+while SEARCH_DEPTH >= 0:
+    if SEARCH_DEPTH == 0 and DEMO_SIZE_LIMIT_SUCCESS != 0:
+        DEMO_SIZE_LIMIT = DEMO_SIZE_LIMIT_SUCCESS
+    if SEARCH_DEPTH == 0 and DEMO_SIZE_LIMIT_SUCCESS == 0:
+        break
+    print "Merging Drawables and Mipmaps ..."
+    merge_drawables_and_mipmaps()
+    print "Solving Maximum Code Coverage Problem ..."
+    ilp_vertices, ilp_resources = solve_ilp(costs, edges, vertices, methods, init_resources)
+    if ilp_vertices != None and ilp_resources != None:
+        all_vertices_len = 0;
+        covered_len = 0;
+        for a in ilp_vertices:
+            if a == 1:
+                covered_len = covered_len + 1
+            all_vertices_len = all_vertices_len + 1
+        print "Covered :" + str(covered_len) + "/" + str(all_vertices_len)
+    else:
+        SEARCH_DEPTH = SEARCH_DEPTH - 1
+        DEMO_SIZE_LIMIT_L = DEMO_SIZE_LIMIT
+        DEMO_SIZE_LIMIT = int((DEMO_SIZE_LIMIT + DEMO_SIZE_LIMIT_R) / 2)
+        print "Search Size at "+str(DEMO_SIZE_LIMIT_L)+" is INFEASIBLE. Search size moves to "+str(DEMO_SIZE_LIMIT)+" ("+str(SEARCH_DEPTH)+" Trial left)"
+        continue
+    '''
+    res_name = []
+    for res_key, res_elem in resource_dict.items():
+        res_name = res_name + [ res_elem["type"] + "/" + res_elem["name"] ]
+    for asset_key, asset_elem in asset_dict.items():
+        res_name = res_name + [ "assets/"+asset_key ]
+    for _m in methods:
+        res_name = res_name + [ _m["class"]+"/"+_m["name"] ]
+    for r in range(len(resources)):
+        if resources[r] == None:
+            sys.stdout.write(res_name[r] + ", ")
+            sys.stdout.flush()
+    '''
+    print "Generating Smali Code based on ILP results ..."
+    generate_smali_code(ilp_vertices, classes, methods)
 
-print "Repackaging into APK ..."
-repack(args.output)
+    if args.purge_res:
+        print "Deleting Unused Resources ..."
+        change = 1
+        while change:
+            change = purge_resources(resource_dict, asset_dict, ilp_resources)
+            print str(change) + " resources deleted."
+
+    print "Deleting Duplicated Files ..."
+    remove_duplicated_files()
+    print "Repackaging into APK ..."
+    package_size_cond = repack(args.output)
+
+    if SEARCH_DEPTH == 0:
+        break
+    elif package_size_cond == 1:
+        DEMO_SIZE_LIMIT_SUCCESS = DEMO_SIZE_LIMIT
+        DEMO_SIZE_LIMIT_R = DEMO_SIZE_LIMIT
+        DEMO_SIZE_LIMIT = int((DEMO_SIZE_LIMIT + DEMO_SIZE_LIMIT_L) / 2)
+        print "Search Size at "+str(DEMO_SIZE_LIMIT_R)+" is FEASIBLE. Search size moves to "+str(DEMO_SIZE_LIMIT)+" ("+str(SEARCH_DEPTH)+" Trial left)"
+    else:
+        SEARCH_DEPTH = SEARCH_DEPTH - 1
+        DEMO_SIZE_LIMIT_L = DEMO_SIZE_LIMIT
+        DEMO_SIZE_LIMIT = int((DEMO_SIZE_LIMIT + DEMO_SIZE_LIMIT_R) / 2)
+        print "Search Size at "+str(DEMO_SIZE_LIMIT_L)+" is INFEASIBLE. Search size moves to "+str(DEMO_SIZE_LIMIT)+" ("+str(SEARCH_DEPTH)+" Trial left)"
+
+    print "Rebase to original files ..."
+    resetToOriginal()
 
 if args.clean:
     print "Cleaning up all the mess ..."
     cleanup()
 
-print "Done!"
+if DEMO_SIZE_LIMIT_SUCCESS != 0:
+    print "Demo Generation is successful! Your demo app size is : "+str(DEMO_SIZE_LIMIT_SUCCESS)
+else:
+    print "Demo Generation is failed. Please adjust your demo app size limit."
 
