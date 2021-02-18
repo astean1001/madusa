@@ -39,8 +39,6 @@ parser.add_argument('--output', '-o', action='store',
                     help='Set output apk path')
 parser.add_argument('--purge_res', action='store_true',
                     help='Purge unused resources')
-parser.add_argument('--delta_debug', action='store_true',
-                    help='Purge unused resources based on Delta Debugging')
 parser.add_argument('--clean', action='store_true',
                     help='Clean up temporary generated files')
 
