@@ -39,6 +39,10 @@ parser.add_argument('--output', '-o', action='store',
                     help='Set output apk path')
 parser.add_argument('--purge_res', action='store_true',
                     help='Purge unused resources')
+parser.add_argument('--percent', '-p', action='store', type=float,
+                    help='Set APK size limit in percent')
+parser.add_argument('--byte', '-b', action='store', type=int,
+                    help='Set APK size limit in byte')
 parser.add_argument('--clean', action='store_true',
                     help='Clean up temporary generated files')
 
@@ -96,6 +100,10 @@ def resetToOriginal():
     FNULL = open(os.devnull, 'w')
     delete_temp_process = subprocess.call("rm -rf "+TEMP_PATH, shell=True, stdout=FNULL)
     copy_backup_process = subprocess.call("cp -r "+TEMP_PATH_BACKUP+" "+TEMP_PATH, shell=True, stdout=FNULL)
+
+def get_original_apk_size(target):
+    target_path_abs = os.path.abspath(target)
+    return os.path.getsize(target_path_abs)
     
 
 def unpack_target(target):
@@ -1270,10 +1278,22 @@ def get_resource_info_by_name(resource_dict, resource_type, resource_name):
             return resource_dict[key]
     return {"type":"", "name":"", "size":0, "index":-1, "child": [], "processed": []}
 
+
+if args.percent and args.byte:
+    sys.exit("Percent and Byte Option Should not set in same time!")
+
+if args.percent:
+    APK_SIZE_LIMIT = int(get_original_apk_size(args.target_path[0]) * float(args.percent))
+if args.byte:
+    APK_SIZE_LIMIT = int(args.byte)
+DEMO_SIZE_LIMIT = APK_SIZE_LIMIT
+
 start_time = time.time()
 print "Welcome to Instant-slicer!"
 print "Unpacking target application at : "+TEMP_PATH
 DEMO_SIZE_LIMIT_R = unpack_target(args.target_path[0])
+print "Current APK Limit : "+str(APK_SIZE_LIMIT)
+print "Original APK Size : "+str(get_original_apk_size(args.target_path[0]))
 print "Unpacked Size : "+str(DEMO_SIZE_LIMIT_R)
 print "Parsing resource list from XML ..."
 resource_dict, resource_idx_by_name = get_resource_dict()
