@@ -835,12 +835,12 @@ def repack(output_path):
         outdir = TEMP_PATH + "/../"
     FNULL = open(os.devnull, 'w')
 
-    repack_process = subprocess.call("apktool b "+TEMP_PATH+" -o "+outdir+"reduced_temp.apk -f", shell=True, stdout=FNULL)
+    repack_process = subprocess.call("apktool b "+TEMP_PATH+" -o "+outdir+"reduced_temp_"+str(dupchecker)+".apk -f", shell=True, stdout=FNULL)
     
     if repack_process != 0:
         raise Exception('Unpacking Failed : Check if apktool is installed properly.')
 
-    if os.path.getsize(outdir+"reduced_temp.apk") < APK_SIZE_LIMIT:
+    if os.path.getsize(outdir+"reduced_temp_"+str(dupchecker)+".apk") < APK_SIZE_LIMIT:
         return 1
     else:
         return 0
@@ -1391,7 +1391,7 @@ while SEARCH_DEPTH > 0:
             outdir = TEMP_PATH + "/../"
         FNULL = open(os.devnull, 'w')
     
-        copy_success_apk_process = subprocess.call("cp "+outdir+"reduced_temp.apk "+outdir+"reduced_app_"+str(DEMO_SIZE_LIMIT_SUCCESS)+".apk", shell=True, stdout=FNULL)
+        copy_success_apk_process = subprocess.call("cp "+outdir+"reduced_temp_"+str(dupchecker)+".apk "+outdir+"reduced_app_"+str(DEMO_SIZE_LIMIT_SUCCESS)+".apk", shell=True, stdout=FNULL)
 
         DEMO_SIZE_LIMIT = int((DEMO_SIZE_LIMIT + DEMO_SIZE_LIMIT_R) / 2)
         print "Search Size at "+str(DEMO_SIZE_LIMIT_R)+" is FEASIBLE. Search size moves to "+str(DEMO_SIZE_LIMIT)+" ("+str(SEARCH_DEPTH)+" Trial left)"
