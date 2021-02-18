@@ -39,6 +39,8 @@ parser.add_argument('--output', '-o', action='store',
                     help='Set output apk path')
 parser.add_argument('--purge_res', action='store_true',
                     help='Purge unused resources')
+parser.add_argument('--merge', action='store_true',
+                    help='Merge drawables/mipmaps into medium resolution')
 parser.add_argument('--percent', '-p', action='store', type=float,
                     help='Set APK size limit in percent')
 parser.add_argument('--byte', '-b', action='store', type=int,
@@ -1278,9 +1280,10 @@ def get_resource_info_by_name(resource_dict, resource_type, resource_name):
             return resource_dict[key]
     return {"type":"", "name":"", "size":0, "index":-1, "child": [], "processed": []}
 
+print "Welcome to Instant-slicer!"
 
 if args.percent and args.byte:
-    sys.exit("Percent and Byte Option Should not set in same time!")
+    sys.exit("Percent and byte option should not be set at the same time!")
 
 if args.percent:
     APK_SIZE_LIMIT = int(get_original_apk_size(args.target_path[0]) * float(args.percent))
@@ -1289,7 +1292,6 @@ if args.byte:
 DEMO_SIZE_LIMIT = APK_SIZE_LIMIT
 
 start_time = time.time()
-print "Welcome to Instant-slicer!"
 print "Unpacking target application at : "+TEMP_PATH
 DEMO_SIZE_LIMIT_R = unpack_target(args.target_path[0])
 print "Current APK Limit : "+str(APK_SIZE_LIMIT)
@@ -1328,10 +1330,11 @@ ilp_vertices = None
 ilp_resources = None
 
 while SEARCH_DEPTH > 0:
-    print "Merging Drawables ..."
-    merge_drawables()
-    print "Merging Mipmaps ..."
-    merge_mipmaps()
+    if args.merge:
+        print "Merging Drawables ..."
+        merge_drawables()
+        print "Merging Mipmaps ..."
+        merge_mipmaps()
     ilp_start_time = time.time()
     print "Solving Maximum Code Coverage Problem ..."
     ilp_vertices, ilp_resources, sav_model = solve_ilp(costs, edges, vertices, methods, init_resources, resource_dict, sav_model)
