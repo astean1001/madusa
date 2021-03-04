@@ -465,6 +465,8 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
                     for sins in m['buf']:
                         strings = string_ref.findall(sins)
                         for s in strings:
+                            if len(s) < 4:
+                                continue
                             if s[1:-1] == "":
                                 continue
                             if s in searched:
@@ -874,7 +876,7 @@ def remove_duplicated_files():
             else:
                 mipmap_list = mipmap_list + [no_ext]
 
-def calculate_resource_size(resource_dict, resource_idx_by_name):
+def calculate_resource_size(resource_dict, assets_dict, resource_idx_by_name):
     resource_idx_by_name["item"] = {}
     # https://developer.android.com/guide/topics/resources/providing-resources#ResourcesFromXml
     # Accessing other resources affects resource usage
@@ -882,6 +884,12 @@ def calculate_resource_size(resource_dict, resource_idx_by_name):
     # https://developer.android.com/guide/topics/resources/providing-resources#ReferencesToThemeAttributes
     style_ref = re.compile("\?[a-z:/\{\}]+[a-zA-Z0-9_.$]+")
     android_res = "{http://schemas.android.com/apk/res/android"
+
+    asset_names_short = []
+
+    for asset_name in assets_dict.keys():
+        if len(asset_name.split(TEMP_PATH + "/assets/")) > 1:
+            asset_names_short.append(asset_name.split(TEMP_PATH + "/assets/")[1])
 
     for dirpath, dirnames, filenames in os.walk(TEMP_PATH + "/res"):
         for filename in filenames:
@@ -912,6 +920,13 @@ def calculate_resource_size(resource_dict, resource_idx_by_name):
                     if not res_idx:
                         continue
                     resource_dict[res_idx[0]]["size"] = resource_dict[res_idx[0]]["size"] + utf8len(ET.tostring(child))
+
+                    # Finding Asset Usage
+                    for ans in asset_names_short:
+                        if ans in ET.tostring(child):
+                            print ans + " in " + resource_dict[res_idx[0]]["name"]
+                            print assets_dict[TEMP_PATH + "/assets/"+ans]['index']
+                            resource_dict[res_idx[0]]["reachable"].append(assets_dict[TEMP_PATH + "/assets/"+ans]['index'])
 
                     # Finding Reference to Style Attr in value
                     if type(child.text) == str and style_ref.match(child.text):
@@ -1089,6 +1104,11 @@ def calculate_resource_size(resource_dict, resource_idx_by_name):
                 if os.path.splitext(filename)[1] == ".xml":
                     resource_file_tree = ET.parse(os.path.join(dirpath,filename))
                     resource_file_root = resource_file_tree.getroot()
+                    for ans in asset_names_short:
+                        if ans in ET.tostring(resource_file_root):
+                            print ans + " in " + resource_dict[res_idx[0]]["name"]
+                            print assets_dict[TEMP_PATH + "/assets/"+ans]['index']
+                            resource_dict[res_idx[0]]["reachable"].append(assets_dict[TEMP_PATH + "/assets/"+ans]['index'])
                     for resource_file_value in resource_file_root.iter():
                         if resource_file_value.tag == "item" and "name" in resource_file_value.attrib.keys():
                             resource_idx_by_name["item"][resource_file_value.attrib["name"]] = res_idx
@@ -1297,22 +1317,23 @@ DEMO_SIZE_LIMIT_R = unpack_target(args.target_path[0])
 print "Current APK Limit : "+str(APK_SIZE_LIMIT)
 print "Original APK Size : "+str(get_original_apk_size(args.target_path[0]))
 print "Unpacked Size : "+str(DEMO_SIZE_LIMIT_R)
+
+
 print "Parsing resource list from XML ..."
 resource_dict, resource_idx_by_name = get_resource_dict()
 #resource_dict = {}
 
-resource_dict, resource_idx_by_name = calculate_resource_size(resource_dict, resource_idx_by_name)
+print "Parsing asset list from directory ..."
+asset_dict = get_asset_dict(resource_dict)
+
+print "Calculate resource dependency from XML ..."
+resource_dict, resource_idx_by_name = calculate_resource_size(resource_dict, asset_dict, resource_idx_by_name)
 
 parse_time = time.time()
 
 print "Resource Parse : "+str(parse_time-start_time)
 
-print "Parsing asset list from directory ..."
-asset_dict = get_asset_dict(resource_dict)
-
 asset_time = time.time()
-
-print "Asset Parse : "+str(asset_time-parse_time)
 
 print "Calculating resource size weighted method dependency graph ..."
 costs, edges, vertices, methods, classes = build_method_dependency_graph(args.ec_file_path[0], args.pickle_path[0], resource_dict, asset_dict)
@@ -1355,6 +1376,7 @@ while SEARCH_DEPTH > 0:
         print "Search Size at "+str(DEMO_SIZE_LIMIT_L)+" is INFEASIBLE. Search size moves to "+str(DEMO_SIZE_LIMIT)+" ("+str(SEARCH_DEPTH)+" Trial left)"
         continue
 
+    #print ilp_resources[get_resource_info_by_name(resource_dict, "drawable", "flag_circle_deu")['index']]
     total_ilp_time = time.time()
 
     print "ILP Time (Total) : "+str(total_ilp_time-encode_time)
