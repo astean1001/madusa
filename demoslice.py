@@ -47,6 +47,8 @@ parser.add_argument('--byte', '-b', action='store', type=int,
                     help='Set APK size limit in byte')
 parser.add_argument('--clean', action='store_true',
                     help='Clean up temporary generated files')
+parser.add_argument('--no_ilp', '-c' , action='store_true',
+                    help='Generate APK without code ILP')
 
 args = parser.parse_args()
 
@@ -296,10 +298,10 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
         buf.extend([LI_TAG(f) for f in cl.get_fields()])
         buf.append(LI_TAG(''))
 
-        _classes = _classes + [{'name': class_name, 'buf': buf}]
-        _class_method_idx[class_name] = {}
 
         for class_desc_line in cl.get_class_description():
+            if ".class" in class_desc_line:
+                class_name = class_desc_line.split(' ')[-1][1:-1]
             if ".super" in class_desc_line:
                 pcln = class_desc_line.split(' ')[-1][:-1]
                 if pcln[0] == 'L':
@@ -314,6 +316,8 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
                 else:
                     _chg[pcln] = [class_name]
 
+        _classes = _classes + [{'name': class_name, 'buf': buf}]
+        _class_method_idx[class_name] = {}
         for m in cl.methods:
             ins_buf = []
             _cost = 0
@@ -394,8 +398,8 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
     print "Node Loading : "+str(int(st-st1))
 
     # Using CHG, search reachable class indexes
-    for clnidx in tqdm(range(len(_chg.keys()))):
-        cln = _chg.keys()[clnidx]
+    for clnidx in tqdm(range(len(_class_method_idx.keys()))):
+        cln = _class_method_idx.keys()[clnidx]
         _reachable[cln] = [cln]
         # Search for all parent
         parent_target = None
@@ -668,19 +672,20 @@ def solve_ilp(costs, edges, vertices, methods, init_resources, resources, saved_
             ilp_frontpart.append("x_" + str(p))
         ilp_frontpart.append("\nSubject To\n")
         cond_counter = 1
-        for v in range(0,len(vertices)):
-            if vertices[v] != 1:
-                if any(edge[1] == v and edge[0] != v  for edge in edges):
-                    ilp_frontpart.append("_C"+str(cond_counter)+": ")
-                    cond_counter = cond_counter + 1
-                    starter = True
-                    for x_no in [edge[0] for edge in edges if edge[1]==v and edge[0] != v]:
-                        if starter:
-                            ilp_frontpart.append("x_"+str(x_no))
-                            starter = False
-                        else:
-                            ilp_frontpart.append(" + x_"+str(x_no))
-                    ilp_frontpart.append(" - x_"+str(v)+" >= 0\n")
+        if not args.no_ilp:
+            for v in range(0,len(vertices)):
+                if vertices[v] != 1:
+                    if any(edge[1] == v and edge[0] != v  for edge in edges):
+                        ilp_frontpart.append("_C"+str(cond_counter)+": ")
+                        cond_counter = cond_counter + 1
+                        starter = True
+                        for x_no in [edge[0] for edge in edges if edge[1]==v and edge[0] != v]:
+                            if starter:
+                                ilp_frontpart.append("x_"+str(x_no))
+                                starter = False
+                            else:
+                                ilp_frontpart.append(" + x_"+str(x_no))
+                        ilp_frontpart.append(" - x_"+str(v)+" >= 0\n")
         for i in range(0,len(costs)):
             for v in range(len(vertices)):
                 if i in methods[v]['res']:
