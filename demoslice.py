@@ -397,45 +397,46 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
 
     print "Node Loading : "+str(int(st-st1))
 
-    # Using CHG, search reachable class indexes
-    for clnidx in tqdm(range(len(_class_method_idx.keys()))):
-        cln = _class_method_idx.keys()[clnidx]
-        _reachable[cln] = [cln]
-        # Search for all parent
-        parent_target = None
-        if cln in _rev_chg.keys():
-            parent_target = _rev_chg[cln]
-        while parent_target:
-            if type(parent_target) == type([]):
-                parent_target = parent_target[0]
-            if parent_target in _reachable.keys():
-                _reachable[cln] = _reachable[cln] + _reachable[parent_target] + [parent_target]
-                break
-            _reachable[cln] = _reachable[cln] + [parent_target]
-            if parent_target in _rev_chg.keys():
-                parent_target = _rev_chg[parent_target]
-            else:
-                parent_target = None
-        # Search for all child
-        child_targets = []
-        if cln in _chg.keys():
-            child_targets = [cln]
-        while len(child_targets) > 0:
-            child_target = child_targets[0]
-            if type(child_target) == type([]):
-                child_target = child_target[0]
-            if child_target in _reachable.keys():
-                _reachable[cln] = _reachable[cln] + _reachable[child_target] + [child_target]
+    if not args.no_ilp:
+        # Using CHG, search reachable class indexes
+        for clnidx in tqdm(range(len(_class_method_idx.keys()))):
+            cln = _class_method_idx.keys()[clnidx]
+            _reachable[cln] = [cln]
+            # Search for all parent
+            parent_target = None
+            if cln in _rev_chg.keys():
+                parent_target = _rev_chg[cln]
+            while parent_target:
+                if type(parent_target) == type([]):
+                    parent_target = parent_target[0]
+                if parent_target in _reachable.keys():
+                    _reachable[cln] = _reachable[cln] + _reachable[parent_target] + [parent_target]
+                    break
+                _reachable[cln] = _reachable[cln] + [parent_target]
+                if parent_target in _rev_chg.keys():
+                    parent_target = _rev_chg[parent_target]
+                else:
+                    parent_target = None
+            # Search for all child
+            child_targets = []
+            if cln in _chg.keys():
+                child_targets = [cln]
+            while len(child_targets) > 0:
+                child_target = child_targets[0]
+                if type(child_target) == type([]):
+                    child_target = child_target[0]
+                if child_target in _reachable.keys():
+                    _reachable[cln] = _reachable[cln] + _reachable[child_target] + [child_target]
+                    child_targets.pop(0)
+                    continue
+                _reachable[cln] = _reachable[cln] + [child_target] 
+                if child_target in _chg.keys():
+                    _reachable[cln] = _reachable[cln] + _chg[child_target]
+                    child_targets = child_targets + _chg[child_target]
                 child_targets.pop(0)
-                continue
-            _reachable[cln] = _reachable[cln] + [child_target] 
-            if child_target in _chg.keys():
-                _reachable[cln] = _reachable[cln] + _chg[child_target]
-                child_targets = child_targets + _chg[child_target]
-            child_targets.pop(0)
-        _reachable[cln] = list(set(_reachable[cln]))
-        # print "----------------"+cln+"----------------"
-        # print _reachable[cln]
+            _reachable[cln] = list(set(_reachable[cln]))
+            # print "----------------"+cln+"----------------"
+            # print _reachable[cln]
 
     et = time.time()
     print "reachable calculation : "+str(int(et-st))
@@ -456,6 +457,7 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
             # edge building
             is_call = re.search("^\tinvoke-", ins)
             is_super = re.search("^\tinvoke-super", ins)
+
             if is_call:
                 class_name = ins.split(" ")[-1].split("->")[0][1:-1]
                 if len(class_name) >= 1 and class_name[0] == 'L':
@@ -469,7 +471,7 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
                     for sins in m['buf']:
                         strings = string_ref.findall(sins)
                         for s in strings:
-                            if len(s) < 4:
+                            if len(s) < 6:
                                 continue
                             if s[1:-1] == "":
                                 continue
@@ -501,12 +503,13 @@ def build_method_dependency_graph(ec_dir, pickle, resources_dict, assets_dict):
                                     searched_parent = searched_parent + [_parent]
                         search_queue.pop(0)
                 '''
-                if class_name in _reachable.keys():
-                    for clnsidx in range(len(_reachable[class_name])):
-                        clns = _reachable[class_name][clnsidx]
-                        if clns in _class_method_idx.keys():
-                            if method_name in _class_method_idx[clns].keys():
-                                _edges = _edges + [(_methods.index(m),_class_method_idx[clns][method_name])]
+                if not args.no_ilp:
+                    if class_name in _reachable.keys():
+                        for clnsidx in range(len(_reachable[class_name])):
+                            clns = _reachable[class_name][clnsidx]
+                            if clns in _class_method_idx.keys():
+                                if method_name in _class_method_idx[clns].keys():
+                                    _edges = _edges + [(_methods.index(m),_class_method_idx[clns][method_name])]
 
     _costs = []
     _total_cost = 0
@@ -697,6 +700,10 @@ def solve_ilp(costs, edges, vertices, methods, init_resources, resources, saved_
                 ilp_frontpart.append("_C"+str(cond_counter)+": ")
                 cond_counter = cond_counter + 1
                 ilp_frontpart.append("x_"+str(v)+" = 1\n")
+            else:
+                ilp_frontpart.append("_C"+str(cond_counter)+": ")
+                cond_counter = cond_counter + 1
+                ilp_frontpart.append("x_"+str(v)+" = 0\n")
         for ir in init_resources:
             ilp_frontpart.append("_C"+str(cond_counter)+": ")
             cond_counter = cond_counter + 1
