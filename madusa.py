@@ -3,7 +3,6 @@ import sys
 import cgi
 import re
 import time
-import pulp
 import argparse
 import javaobj
 import shutil
@@ -23,12 +22,12 @@ from operator import attrgetter
 
 dupchecker = int(random.random() * 10000000000)
 
-TEMP_PATH = os.path.join(os.path.expanduser("~"),"demoslice","temp_"+str(dupchecker))
-TEMP_PATH_BACKUP = os.path.join(os.path.expanduser("~"),"demoslice","temp_orig_"+str(dupchecker))
-TEMP_PATH_ILP = os.path.join(os.path.expanduser("~"),"demoslice")
+TEMP_PATH = os.path.join(os.path.expanduser("~"),"madusa","temp_"+str(dupchecker))
+TEMP_PATH_BACKUP = os.path.join(os.path.expanduser("~"),"madusa","temp_orig_"+str(dupchecker))
+TEMP_PATH_ILP = os.path.join(os.path.expanduser("~"),"madusa")
 
 
-parser = argparse.ArgumentParser(description='Slicing and repackaging Android APK into demo application based on demo scenario.')
+parser = argparse.ArgumentParser(description='Slicing and repackaging Android APK into demo application based on usage scenario.')
 parser.add_argument('target_path', metavar='target', type=str, nargs=1,
                     help='Path to target android application.')
 parser.add_argument('ec_file_path', metavar='ec_files', type=str, nargs=1,
