@@ -1,7 +1,7 @@
 
 # MADUSA
 
-Android Demo Application Generator based on usage scenario.]
+Android Demo Application Generator based on usage scenario.
 ## Installation
 
 ### Prerequisites
