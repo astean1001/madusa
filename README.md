@@ -45,21 +45,21 @@ Android Demo Application Generator based on usage scenario.]
   1. Get dataset from [zenodo](https://zenodo.org/record/7272254)
   2. Turn on Virtual Device Manager, create a device. API level of virtual device should be below 29. 
   3. Instrument original applications in `/original_apps` directory of dataset with [ACVTool](https://github.com/pilgun/acvtool).
-    - `acv instrument <apk_path>`
-    - The instrumented app appears in the same directory of original app.
+     - `acv instrument <apk_path>`
+     - The instrumented app appears in the same directory of original app.
   4. Install the instrumented app in emulator
-    - `acv install <instrumented_app_path>`
+     - `acv install <instrumented_app_path>`
   5. Start installed app to measure code coverage.
-    - `acv start <package.name>`
+     - `acv start <package.name>`
   6. Interact with installed app refer to video in `/scenario` directory of dataset.
-    - If video shows terminal with some command, type the same command in the video at first.
-    - If you want to reproduce the result as similar as possible, you should follow just as video doing.
+     - If video shows terminal with some command, type the same command in the video at first.
+     - If you want to reproduce the result as similar as possible, you should follow just as video doing.
   7. Finalize testing by pressing Ctrl+C. 
   8. Generate the code coverage report after tesing an app
-    - `acv report <package.name> -p <path>` 
+     - `acv report <package.name> -p <path>` 
   9. At `~/acvtool/acvtool_working_dir/report/<package.name>`, you can get ec_files and at `~/acvtool/acvtool_working_dir/metadata/<package.name>.pickle`, you can get pickle file
   10. Run MADUSA to generate reduced demo application
-    - MADUSA will generate reduced apk at `~/madusa`
+      - MADUSA will generate reduced apk at `~/madusa`
 
 ## License
 
